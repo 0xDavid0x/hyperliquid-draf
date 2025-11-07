@@ -1,0 +1,105 @@
+# Version 1.7.7
+## Improvements
+- Added support for perpDexLimits and noop operations
+- Add support for new userFills response fields
+
+## Bug Fixes
+- Fixed Websocket connection issues
+
+
+
+# Version 1.7.6
+## Improvements
+- Added registerReferrer method
+- Added option to disable or change the refresh interval for asset maps (useful when using multiple SDK instances on the same IP to avoid rate limiting)
+- Added support for Websocket post requests with auth
+
+## Bug fixes
+- Fixed issue with Husky in install script, removed it except in dev environments so installing package works as normal again
+
+
+
+# Version 1.7.5
+
+## Improvements:
+- After auto-reconnecting to websocket we also auto-resubscribe to all the subscriptions the user previously had
+
+- BBO WebSocket topic added
+
+- Reserve Rate limit endpoint added
+
+## Bug Fixes:
+- Modify Order Endpoint can be used with both CLOID and Order ID now
+
+- Bulk order requests fixed so they work properly again
+
+- Fixed issue with infinite refreshing of asset maps
+
+## For the Nerds
+- Added prettier for consistent code formatting/styling, check .prettierrc.js for style rules
+
+
+# Version 1.7.4
+
+Mostly just bug fixes this time around, but sghould make for a better user experience
+
+Bug Fixes:
+- `approveBuilderFee` and using builder codes for orders works now
+
+- Multi-order placement works again (accidentally broken in last version)
+
+- Edge case with BTC-PERP market orders fixed
+
+- Testnet now works without problems
+
+- Fixed a problem where a background API call would fail and create tons of error logs
+
+
+
+# Version 1.7.3
+
+## Bug Fixes:
+- **WebSocket:** Fixed issue with WebSockets reconnecting automatically after a user-initiated manual disconnect
+
+## New API Methods: Added 12 new methods
+```
+  - claimRewards: Claim available rewards
+  - createSubAccount: Create a new sub-account
+  - setDisplayName: Set display name for an account (leaderboard)
+  - spotUser: Opt in/out of spot dusting (HL removing small balances from your account each day)
+  - createVault: Create a new vault
+  - vaultDistribute: Distribute assets from a vault
+  - vaultModify: Modify vault parameters
+  - cDeposit: Deposit for staking
+  - cWithdraw: Withdraw staking
+  - tokenDelegate: Delegate tokens to validators (or undelegate)
+  - subAccountSpotTransfer: Transfer spot assets between sub-accounts
+  - subAccountTransfer: Transfer assets between sub-accounts
+```
+
+# Version 1.7.0
+
+## New things introduced:
+- **Automatic Trailing Zeros Handling:** Added automatic removal of trailing zeros for price and size fields to prevent "L1 error: User or API Wallet 0x... does not exist" errors
+- **Rate Limiting:** Implemented official token bucket system (100 tokens, 10/sec refill)
+- **WebSocket:** Added heartbeat detection, better reconnection, and subscription limit tracking (prevent 429 errors)
+- **Nonce Generation:** Enhanced for reliability with monotonically increasing values
+- **API Methods: Added 15 new methods
+```
+  - validatorSummaries: Get summaries of all validators
+  - vaultSummaries: Get summaries of all vaults
+  - blockDetails: Get details of a specific block
+  - txDetails: Get details of a specific transaction
+  - userDetails: Get details of a specific user
+  - userFees: Get fee information for a user
+  - portfolio: Get portfolio information for a user
+  - preTransferCheck: Check if a transfer is possible between addresses
+  - referral: Get referral information for a user
+  - extraAgents: Get extra agent information for a user
+  - isVip: Check if a user has VIP status
+  - legalCheck: Perform legal compliance check for a user
+  - userTwapSliceFillsByTime: Get TWAP slice fills for a user in a time range
+  - twapHistory: Get TWAP history for a user
+  - userToMultiSigSigners: Get multi-sig signers for a user
+```
+
