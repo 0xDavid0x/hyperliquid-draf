@@ -3,7 +3,7 @@
 import { useState, useEffect } from 'react';
 import { useSignTypedData } from 'wagmi';
 import { parseSignature, isHex } from 'viem';
-import { Hyperliquid } from 'hyperliquid';
+import { Hyperliquid, SpotToken } from 'hyperliquid';
 
 interface SendTokensProps {
   walletAddress: string;
@@ -70,14 +70,14 @@ export function SendTokens({ walletAddress }: SendTokensProps) {
 
       try {
         const spotMeta = await sdk.info.spot.getSpotMeta();
-        const tokens = spotMeta.tokens.map((token: any) => ({
+        const tokens = spotMeta.tokens.map((token: SpotToken) => ({
           name: token.name,
           tokenId: token.tokenId,
         }));
         setSpotTokens(tokens);
         if (tokens.length > 0) {
           // Default to USDC if available
-          const usdc = tokens.find((t: any) => t.name === 'USDC');
+          const usdc = tokens.find((t: { name: string; tokenId: string }) => t.name === 'USDC');
           if (usdc) {
             setSelectedToken(`${usdc.name}:${usdc.tokenId}`);
           } else {
@@ -121,9 +121,9 @@ export function SendTokens({ walletAddress }: SendTokensProps) {
 
           const spotState = await sdk.info.spot.getSpotClearinghouseState(normalizedWalletAddress);
           if (spotState && typeof spotState === 'object' && 'balances' in spotState) {
-            const balances = (spotState as any).balances || [];
+            const balances = (spotState as { balances: Array<{ coin: string; total: string }> }).balances || [];
             const tokenName = selectedToken.split(':')[0];
-            const tokenBalance = balances.find((bal: any) => bal.coin === tokenName || bal.coin === `${tokenName}-SPOT`);
+            const tokenBalance = balances.find((bal: { coin: string; total: string }) => bal.coin === tokenName || bal.coin === `${tokenName}-SPOT`);
             
             if (tokenBalance && tokenBalance.total) {
               const total = parseFloat(tokenBalance.total);
@@ -479,7 +479,7 @@ export function SendTokens({ walletAddress }: SendTokensProps) {
         <button
           onClick={handleSend}
           disabled={isLoading || !sdk}
-          className="w-full bg-gradient-to-r from-purple-500 to-indigo-600 hover:from-purple-600 hover:to-indigo-700 disabled:from-gray-400 disabled:to-gray-500 text-white font-bold py-3 px-6 rounded-lg shadow-lg transition-all duration-200 transform hover:scale-105 disabled:transform-none disabled:cursor-not-allowed"
+          className="w-full bg-[#00C4B4] hover:bg-[#00B8A8] disabled:bg-gray-400 disabled:hover:bg-gray-500 text-white font-bold py-3 px-6 rounded-lg shadow-lg transition-all duration-200 transform hover:scale-105 disabled:transform-none disabled:cursor-not-allowed"
         >
           {isLoading ? (
             <span className="flex items-center justify-center">
