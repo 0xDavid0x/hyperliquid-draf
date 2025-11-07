@@ -4,9 +4,9 @@ import { useState, useEffect } from 'react';
 import { useSignTypedData } from 'wagmi';
 import { parseSignature, isHex } from 'viem';
 import { Wallet } from 'ethers';
-import { 
-  Hyperliquid,
-} from 'hyperliquid';
+import { useHyperliquid } from '../contexts/HyperliquidContext';
+import { SkeletonBalance } from './Skeleton';
+import { useClearinghouseState, useAllMids, useInvalidateHyperliquidQueries } from '../hooks/useHyperliquidQueries';
 
 interface TradingProps {
   walletAddress: string;
@@ -59,29 +59,33 @@ function generateAgentWallet(): { privateKey: string; address: string } {
 }
 
 export function Trading({ walletAddress, coin = 'BTC-PERP' }: TradingProps) {
+  const { readOnlySdk, getTradingSdk } = useHyperliquid();
   const [activeTab, setActiveTab] = useState<'long' | 'short'>('long');
   const [isLoading, setIsLoading] = useState(false);
   const [status, setStatus] = useState<{
     type: 'success' | 'error' | 'info';
     message: string;
   } | null>(null);
-  const [sdk, setSdk] = useState<Hyperliquid | null>(null);
-  const [btcPrice, setBtcPrice] = useState<string>('Loading...');
   const [orderSize, setOrderSize] = useState<string>('10');
   const [leverage, setLeverage] = useState<number>(20);
   const [orderTab, setOrderTab] = useState<'market' | 'limit'>('market');
   const [limitOrderType, setLimitOrderType] = useState<'Gtc' | 'Ioc' | 'Alo'>('Gtc');
   const [limitPrice, setLimitPrice] = useState<string>('');
   const [lastNonce, setLastNonce] = useState<number>(0);
-  const [perpsBalance, setPerpsBalance] = useState<string>('Loading...');
+  const [perpsBalance, setPerpsBalance] = useState<string | null>(null);
   const [isTradingEnabled, setIsTradingEnabled] = useState<boolean | null>(null);
-  const [positionSize, setPositionSize] = useState<string>('0.00000');
+  const { invalidateClearinghouseState } = useInvalidateHyperliquidQueries();
   const [sizePercent, setSizePercent] = useState<number>(0);
   const [reduceOnly, setReduceOnly] = useState<boolean>(false);
   const [takeProfitStopLoss, setTakeProfitStopLoss] = useState<boolean>(false);
   const [marginType, setMarginType] = useState<'isolated' | 'cross'>('isolated');
   const [sizeUnit, setSizeUnit] = useState<string>('USDC');
   const { signTypedDataAsync } = useSignTypedData();
+  
+  // Get allMids from React Query cache at top level
+  const { data: allMidsCache } = useAllMids();
+
+  // Remove old SDK state - now using context
 
   // Get coin name from coin prop (remove -PERP suffix)
   const coinName = coin.replace('-PERP', '');
@@ -114,98 +118,24 @@ export function Trading({ walletAddress, coin = 'BTC-PERP' }: TradingProps) {
     }
   }, [walletAddress]);
 
+  // Fetch perps balance using React Query
+  const { data: perpsState, isLoading: isLoadingBalance } = useClearinghouseState(walletAddress);
+  
   useEffect(() => {
-    const initializeSDK = async () => {
-      try {
-        const hyperliquid = new Hyperliquid({
-          testnet: TESTNET,
-          enableWs: false,
-          walletAddress: walletAddress,
-        });
-
-        await hyperliquid.connect();
-        await hyperliquid.ensureInitialized();
-        setSdk(hyperliquid);
-
-        const normalizedWalletAddress = walletAddress.toLowerCase();
-
-        // Fetch coin price will be done in separate useEffect
-
-        const agentInfo = getAgentFromStorage(walletAddress);
-
-        try {
-          const perpsState = await hyperliquid.info.perpetuals.getClearinghouseState(normalizedWalletAddress);
-          const withdrawable = parseFloat(perpsState.withdrawable || '0');
-          setPerpsBalance(`$${withdrawable.toFixed(2)}`);
-          if (agentInfo) {
-            setIsTradingEnabled(true);
-          } else {
-            setIsTradingEnabled(false);
-          }
-        } catch (error: unknown) {
-          console.error('Error fetching perps balance:', error);
-          const errorMessage = (error as Error)?.message || (error as { response?: string })?.response || '';
-          if (errorMessage.includes('does not exist') || errorMessage.includes('not found')) {
-            if (!agentInfo) {
-              setIsTradingEnabled(false);
-            } else {
-              setIsTradingEnabled(false);
-            }
-          } else {
-            if (agentInfo) {
-              setIsTradingEnabled(true);
-            } else {
-              setIsTradingEnabled(false);
-            }
-          }
-          setPerpsBalance('N/A');
-        }
-      } catch (error) {
-        console.error('Error initializing SDK:', error);
-        setStatus({
-          type: 'error',
-          message: 'Failed to initialize Hyperliquid SDK',
-        });
-      }
-    };
-
-    if (walletAddress) {
-      initializeSDK();
+    if (perpsState) {
+      const withdrawable = parseFloat(perpsState.withdrawable || '0');
+      setPerpsBalance(`$${withdrawable.toFixed(2)}`);
+      const agentInfo = getAgentFromStorage(walletAddress);
+      setIsTradingEnabled(!!agentInfo);
+    } else if (!isLoadingBalance) {
+      setPerpsBalance('N/A');
+      const agentInfo = getAgentFromStorage(walletAddress);
+      setIsTradingEnabled(!!agentInfo);
     }
-
-      return () => {
-      };
-    }, [walletAddress]);
-
-  // Fetch coin price when coin changes
-  useEffect(() => {
-    const fetchCoinPrice = async () => {
-      if (!sdk || !coin) return;
-      
-      try {
-        const allMids = await sdk.info.getAllMids();
-        const coinPriceValue = allMids[coin] || allMids[coin.replace('-PERP', '')];
-        if (coinPriceValue) {
-          setBtcPrice(`$${typeof coinPriceValue === 'number' ? (coinPriceValue as number).toFixed(2) : (parseFloat(String(coinPriceValue)) as number).toFixed(2)}`);
-        } else {
-          setBtcPrice('Loading...');
-        }
-      } catch (error) {
-        console.error('Error fetching coin price:', error);
-        setBtcPrice('N/A');
-      }
-    };
-
-    if (sdk && coin) {
-      fetchCoinPrice();
-      // Refresh price every 5 seconds
-      const interval = setInterval(fetchCoinPrice, 5000);
-      return () => clearInterval(interval);
-    }
-  }, [sdk, coin]);
+  }, [perpsState, isLoadingBalance, walletAddress]);
 
   const handleEnableTrading = async () => {
-    if (!sdk) {
+    if (!readOnlySdk) {
       setStatus({
         type: 'error',
         message: 'SDK not initialized. Please refresh the page.',
@@ -225,7 +155,7 @@ export function Trading({ walletAddress, coin = 'BTC-PERP' }: TradingProps) {
     setStatus(null);
 
     try {
-      await sdk.ensureInitialized();
+      await readOnlySdk.ensureInitialized();
       console.log('=== ENABLE TRADING START ===');
       
       let agentInfo = getAgentFromStorage(walletAddress);
@@ -359,15 +289,7 @@ export function Trading({ walletAddress, coin = 'BTC-PERP' }: TradingProps) {
     setStatus(null);
 
     try {
-      const tradingSdk = new Hyperliquid({
-        privateKey: agentInfo.privateKey,
-        testnet: TESTNET,
-        walletAddress: agentInfo.userAddress,
-        enableWs: false,
-      });
-
-      await tradingSdk.connect();
-      await tradingSdk.ensureInitialized();
+      const tradingSdk = await getTradingSdk(agentInfo.privateKey, agentInfo.userAddress);
       
       const coinSymbol = coin;
       console.log(`Adjusting leverage to ${leverage}x on ${coinSymbol}...`);
@@ -379,6 +301,11 @@ export function Trading({ walletAddress, coin = 'BTC-PERP' }: TradingProps) {
         type: 'success',
         message: `Leverage adjusted to ${leverage}x successfully!`,
       });
+      
+      // Invalidate queries to refresh data
+      if (walletAddress) {
+        invalidateClearinghouseState(walletAddress);
+      }
     } catch (error: unknown) {
       console.error('Error adjusting leverage:', error);
       setStatus({
@@ -416,17 +343,10 @@ export function Trading({ walletAddress, coin = 'BTC-PERP' }: TradingProps) {
     try {
       console.log('=== PLACE ORDER START ===');
       console.log('agentInfo', agentInfo);
-      const tradingSdk = new Hyperliquid({
-        privateKey: agentInfo.privateKey,
-        testnet: TESTNET,
-        walletAddress: agentInfo.userAddress,
-        enableWs: false,
-      });
-
-      await tradingSdk.connect();
-      await tradingSdk.ensureInitialized();
+      const tradingSdk = await getTradingSdk(agentInfo.privateKey, agentInfo.userAddress);
       
-      const allMids = await tradingSdk.info.getAllMids();
+      // Use React Query cache if available, otherwise fetch
+      const allMids = allMidsCache || await tradingSdk.info.getAllMids();
       const coinPriceValue = allMids[coin] || allMids[coin.replace('-PERP', '')];
       
       if (!coinPriceValue) {
@@ -553,6 +473,11 @@ export function Trading({ walletAddress, coin = 'BTC-PERP' }: TradingProps) {
         type: 'success',
         message: `${isBuy ? 'Long' : 'Short'} order placed successfully! Status: ${JSON.stringify(orderResult.status)}`,
       });
+      
+      // Invalidate queries to refresh data
+      if (walletAddress) {
+        invalidateClearinghouseState(walletAddress);
+      }
     } catch (error: unknown) {
       console.error('Error placing order:', error);
       setStatus({
@@ -564,53 +489,40 @@ export function Trading({ walletAddress, coin = 'BTC-PERP' }: TradingProps) {
     }
   };
 
-  // Calculate position size from clearinghouse state
-  useEffect(() => {
-    const fetchPosition = async () => {
-      if (!sdk || !walletAddress) return;
-      try {
-        const normalizedWalletAddress = walletAddress.toLowerCase();
-        const perpsState = await sdk.info.perpetuals.getClearinghouseState(normalizedWalletAddress);
-        const coinPosition = perpsState.assetPositions?.find(
-          (pos: any) => pos.position?.coin === coin || pos.position?.coin === coin.replace('-PERP', '')
-        );
-        if (coinPosition?.position?.szi) {
-          const size = parseFloat(coinPosition.position.szi);
-          setPositionSize(Math.abs(size).toFixed(5));
-        } else {
-          setPositionSize('0.00000');
-        }
-      } catch (error) {
-        console.error('Error fetching position:', error);
-        setPositionSize('0.00000');
-      }
-    };
-    if (sdk && walletAddress) {
-      fetchPosition();
-      const interval = setInterval(fetchPosition, 10000);
-      return () => clearInterval(interval);
-    }
-  }, [sdk, walletAddress, coin]);
-
   // Update order size based on percentage slider
   useEffect(() => {
-    if (sizePercent > 0 && perpsBalance !== 'Loading...' && btcPrice !== 'Loading...') {
-      const balance = parseFloat(perpsBalance.replace(/[^0-9.]/g, ''));
-      const price = parseFloat(btcPrice.replace(/[^0-9.]/g, ''));
-      if (!isNaN(balance) && !isNaN(price) && price > 0) {
-        const sizeInUsd = (balance * sizePercent) / 100;
-        if (sizeUnit === coinName) {
-          const sizeInCoin = sizeInUsd / price;
-          setOrderSize(sizeInCoin.toFixed(4));
-        } else {
-          setOrderSize(sizeInUsd.toFixed(2));
+    const updateSizeFromPercent = async () => {
+      if (sizePercent > 0 && perpsBalance !== null && perpsBalance !== 'N/A' && readOnlySdk && coin) {
+        try {
+          const balance = parseFloat(perpsBalance.replace(/[^0-9.]/g, ''));
+          if (isNaN(balance)) return;
+          
+          // Use React Query cache
+          const allMids = allMidsCache || {};
+          const coinPriceValue = allMids[coin] || allMids[coin.replace('-PERP', '')];
+          if (!coinPriceValue) return;
+          
+          const price = typeof coinPriceValue === 'number' ? coinPriceValue : parseFloat(String(coinPriceValue));
+          if (isNaN(price) || price <= 0) return;
+          
+          const sizeInUsd = (balance * sizePercent) / 100;
+          if (sizeUnit === coinName) {
+            const sizeInCoin = sizeInUsd / price;
+            setOrderSize(sizeInCoin.toFixed(4));
+          } else {
+            setOrderSize(sizeInUsd.toFixed(2));
+          }
+        } catch (error) {
+          console.error('Error fetching price for size calculation:', error);
         }
       }
-    }
-  }, [sizePercent, perpsBalance, btcPrice, sizeUnit, coinName]);
+    };
+    
+    updateSizeFromPercent();
+  }, [sizePercent, perpsBalance, sizeUnit, coinName, readOnlySdk, coin, allMidsCache]);
 
   // Handle size unit change - convert between coin and USDC
-  const handleSizeUnitChange = (newUnit: SizeUnitType) => {
+  const handleSizeUnitChange = async (newUnit: SizeUnitType) => {
     if (newUnit === sizeUnit) return;
     
     const currentSize = parseFloat(orderSize) || 0;
@@ -619,80 +531,98 @@ export function Trading({ walletAddress, coin = 'BTC-PERP' }: TradingProps) {
       return;
     }
 
-    const price = parseFloat(btcPrice.replace(/[^0-9.]/g, ''));
-    if (isNaN(price) || price <= 0) {
+    if (!readOnlySdk || !coin) {
       setSizeUnit(newUnit);
       return;
     }
 
-    if (sizeUnit === coinName && newUnit === 'USDC') {
-      // Convert coin to USDC
-      const usdcValue = currentSize * price;
-      setOrderSize(usdcValue.toFixed(2));
-    } else if (sizeUnit === 'USDC' && newUnit === coinName) {
-      // Convert USDC to coin
-      const coinValue = currentSize / price;
-      setOrderSize(coinValue.toFixed(4));
+    try {
+      // Use React Query cache
+      const allMids = allMidsCache || {};
+      const coinPriceValue = allMids[coin] || allMids[coin.replace('-PERP', '')];
+      if (!coinPriceValue) {
+        setSizeUnit(newUnit);
+        return;
+      }
+      
+      const price = typeof coinPriceValue === 'number' ? coinPriceValue : parseFloat(String(coinPriceValue));
+      if (isNaN(price) || price <= 0) {
+        setSizeUnit(newUnit);
+        return;
+      }
+
+      if (sizeUnit === coinName && newUnit === 'USDC') {
+        // Convert coin to USDC
+        const usdcValue = currentSize * price;
+        setOrderSize(usdcValue.toFixed(2));
+      } else if (sizeUnit === 'USDC' && newUnit === coinName) {
+        // Convert USDC to coin
+        const coinValue = currentSize / price;
+        setOrderSize(coinValue.toFixed(4));
+      }
+      setSizeUnit(newUnit);
+    } catch (error) {
+      console.error('Error fetching price for unit conversion:', error);
+      setSizeUnit(newUnit);
     }
-    setSizeUnit(newUnit);
   };
 
   return (
-    <div className="h-full flex flex-col bg-[#1A202C]">
-      <div className="flex flex-col flex-1 overflow-hidden">
+    <div className="h-full flex flex-col bg-[#0C130F] overflow-hidden">
+      <div className="flex flex-col flex-1 overflow-y-auto scrollbar-thin">
         {/* Top Controls - Pills */}
-        <div className="flex gap-2 p-3 border-b border-[#2a2a2a]">
+        <div className="flex gap-2 p-3 border-b border-[#1b1b1b]">
           <button
             onClick={() => setMarginType('isolated')}
             className={`px-3 py-1.5 rounded-full text-xs font-medium transition-all ${
               marginType === 'isolated'
-                ? 'bg-[#374151] text-white'
-                : 'bg-[#2a2a2a] text-gray-400 hover:text-white'
+                ? 'bg-[#1b1b1b] text-[#c0c0c0]'
+                : 'bg-[#1b1b1b] text-[#888] hover:text-[#c0c0c0]'
             }`}
           >
             Isolated
           </button>
           <button
-            className="px-3 py-1.5 rounded-full text-xs font-medium bg-[#2a2a2a] text-white"
+            className="px-3 py-1.5 rounded-full text-xs font-medium bg-[#1b1b1b] text-[#c0c0c0]"
           >
             {leverage}x
           </button>
           <button
-            className="px-3 py-1.5 rounded-full text-xs font-medium bg-[#2a2a2a] text-gray-400"
+            className="px-3 py-1.5 rounded-full text-xs font-medium bg-[#1b1b1b] text-[#888]"
           >
             One-Way
           </button>
         </div>
 
         {/* Order Type Tabs */}
-        <div className="flex gap-4 px-3 py-2 border-b border-[#2a2a2a]">
+        <div className="flex gap-4 px-3 py-2 border-b border-[#1b1b1b]">
           <button
             onClick={() => setOrderTab('market')}
             className={`text-sm font-medium transition-all relative pb-1 ${
               orderTab === 'market'
-                ? 'text-white'
-                : 'text-gray-400 hover:text-white'
+                ? 'text-[#c0c0c0]'
+                : 'text-[#888] hover:text-[#c0c0c0]'
             }`}
           >
             Market
             {orderTab === 'market' && (
-              <div className="absolute bottom-0 left-0 right-0 h-0.5 bg-[#00C4B4]"></div>
+              <div className="absolute bottom-0 left-0 right-0 h-0.5 bg-[#03c987]"></div>
             )}
           </button>
           <button
             onClick={() => setOrderTab('limit')}
             className={`text-sm font-medium transition-all relative pb-1 ${
               orderTab === 'limit'
-                ? 'text-white'
-                : 'text-gray-400 hover:text-white'
+                ? 'text-[#c0c0c0]'
+                : 'text-[#888] hover:text-[#c0c0c0]'
             }`}
           >
             Limit
             {orderTab === 'limit' && (
-              <div className="absolute bottom-0 left-0 right-0 h-0.5 bg-[#00C4B4]"></div>
+              <div className="absolute bottom-0 left-0 right-0 h-0.5 bg-[#03c987]"></div>
             )}
           </button>
-          <button className="text-sm font-medium text-gray-400 hover:text-white flex items-center gap-1">
+          <button className="text-sm font-medium text-[#888] hover:text-[#c0c0c0] flex items-center gap-1">
             Pro
             <svg className="w-3 h-3" fill="none" stroke="currentColor" viewBox="0 0 24 24">
               <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 9l-7 7-7-7" />
@@ -701,16 +631,16 @@ export function Trading({ walletAddress, coin = 'BTC-PERP' }: TradingProps) {
         </div>
         
         {/* Tab Content */}
-        <div className="flex-1 overflow-auto p-4">
+        <div className="flex-1 overflow-auto p-4 scrollbar-thin">
           <div className="w-full space-y-4">
             {/* Buy/Sell Toggle */}
-            <div className="flex gap-1 bg-[#2a2a2a] rounded-lg p-1">
+            <div className="flex gap-1 bg-[#1b1b1b] rounded-lg p-1">
               <button
                 onClick={() => setActiveTab('long')}
                 className={`flex-1 py-2.5 px-4 rounded-md text-sm font-medium transition-all ${
                   activeTab === 'long'
-                    ? 'bg-[#00C4B4] text-white'
-                    : 'text-gray-400 hover:text-white'
+                    ? 'bg-[#03c987] text-white'
+                    : 'text-[#888] hover:text-[#c0c0c0]'
                 }`}
               >
                 Buy / Long
@@ -719,8 +649,8 @@ export function Trading({ walletAddress, coin = 'BTC-PERP' }: TradingProps) {
                 onClick={() => setActiveTab('short')}
                 className={`flex-1 py-2.5 px-4 rounded-md text-sm font-medium transition-all ${
                   activeTab === 'short'
-                    ? 'bg-red-600 hover:bg-red-700 text-white'
-                    : 'text-gray-400 hover:text-white'
+                    ? 'bg-[#ff4d4f] hover:bg-[#ee3d40] text-white'
+                    : 'text-[#888] hover:text-[#c0c0c0]'
                 }`}
               >
                 Sell / Short
@@ -730,26 +660,18 @@ export function Trading({ walletAddress, coin = 'BTC-PERP' }: TradingProps) {
             {/* Available to Trade & Current Position */}
             <div className="space-y-2">
               <div className="flex items-center justify-between">
-                <span className="text-sm text-gray-400">Available to Trade</span>
-                <span className="text-sm font-medium text-white">{perpsBalance}</span>
-              </div>
-              <div className="flex items-center justify-between">
-                <span className="text-sm text-gray-400">Current Position</span>
-                <span className="text-sm font-medium text-white">{positionSize} {coin.replace('-PERP', '')}</span>
-              </div>
-            </div>
-
-            {/* Coin Price Display */}
-            <div className="space-y-2">
-              <div className="flex items-center justify-between">
-                <span className="text-sm text-gray-400">{coin.replace('-PERP', '')} Price</span>
-                <span className="text-sm font-medium text-white">{btcPrice}</span>
+                <span className="text-sm text-[#888]">Available to Trade</span>
+                {isLoadingBalance || perpsBalance === null ? (
+                  <SkeletonBalance width={80} />
+                ) : (
+                  <span className="text-sm font-medium text-[#c0c0c0]">{perpsBalance}</span>
+                )}
               </div>
             </div>
 
             {/* Leverage Input */}
             <div className="space-y-2">
-              <label className="block text-sm text-gray-400">Leverage</label>
+              <label className="block text-sm text-[#888]">Leverage</label>
               <div className="flex items-center gap-2">
                 <input
                   type="number"
@@ -764,13 +686,13 @@ export function Trading({ walletAddress, coin = 'BTC-PERP' }: TradingProps) {
                     }
                   }}
                   disabled={isLoading}
-                  className="flex-1 px-3 py-2 bg-[#2a2a2a] border border-[#374151] rounded-lg text-white focus:ring-2 focus:ring-[#00C4B4] focus:border-transparent disabled:opacity-50 disabled:cursor-not-allowed"
+                  className="flex-1 px-3 py-2 bg-[#1b1b1b] border border-[#1b1b1b] rounded-lg text-[#c0c0c0] focus:ring-2 focus:ring-[#03c987] focus:border-transparent disabled:opacity-50 disabled:cursor-not-allowed"
                   placeholder="20"
                 />
                 <button
                   onClick={handleAdjustLeverage}
-                  disabled={isLoading || !sdk || isTradingEnabled === false}
-                  className="px-4 py-2 bg-[#374151] hover:bg-[#4B5563] text-white text-sm font-medium rounded-lg transition-all disabled:opacity-50 disabled:cursor-not-allowed"
+                  disabled={isLoading || !readOnlySdk || isTradingEnabled === false}
+                  className="px-4 py-2 bg-[#1b1b1b] hover:bg-[#2a2a2a] text-[#c0c0c0] text-sm font-medium rounded-lg transition-all disabled:opacity-50 disabled:cursor-not-allowed"
                 >
                   Set
                 </button>
@@ -787,7 +709,7 @@ export function Trading({ walletAddress, coin = 'BTC-PERP' }: TradingProps) {
                     onClick={() => setLimitOrderType('Gtc')}
                     className={`flex-1 py-2 px-3 rounded-lg text-sm font-medium transition-all ${
                       limitOrderType === 'Gtc'
-                        ? 'bg-[#00C4B4] text-white'
+                        ? 'bg-[#03c987] text-white'
                         : 'bg-[#2a2a2a] text-gray-400 hover:text-white'
                     }`}
                   >
@@ -797,7 +719,7 @@ export function Trading({ walletAddress, coin = 'BTC-PERP' }: TradingProps) {
                     onClick={() => setLimitOrderType('Ioc')}
                     className={`flex-1 py-2 px-3 rounded-lg text-sm font-medium transition-all ${
                       limitOrderType === 'Ioc'
-                        ? 'bg-[#00C4B4] text-white'
+                        ? 'bg-[#03c987] text-white'
                         : 'bg-[#2a2a2a] text-gray-400 hover:text-white'
                     }`}
                   >
@@ -807,7 +729,7 @@ export function Trading({ walletAddress, coin = 'BTC-PERP' }: TradingProps) {
                     onClick={() => setLimitOrderType('Alo')}
                     className={`flex-1 py-2 px-3 rounded-lg text-sm font-medium transition-all ${
                       limitOrderType === 'Alo'
-                        ? 'bg-[#00C4B4] text-white'
+                        ? 'bg-[#03c987] text-white'
                         : 'bg-[#2a2a2a] text-gray-400 hover:text-white'
                     }`}
                   >
@@ -828,7 +750,7 @@ export function Trading({ walletAddress, coin = 'BTC-PERP' }: TradingProps) {
                   value={limitPrice}
                   onChange={(e) => setLimitPrice(e.target.value)}
                   disabled={isLoading}
-                  className="w-full px-3 py-2 bg-[#2a2a2a] border border-[#374151] rounded-lg text-white focus:ring-2 focus:ring-[#00C4B4] focus:border-transparent disabled:opacity-50 disabled:cursor-not-allowed"
+                  className="w-full px-3 py-2 bg-[#2a2a2a] border border-[#374151] rounded-lg text-white focus:ring-2 focus:ring-[#03c987] focus:border-transparent disabled:opacity-50 disabled:cursor-not-allowed"
                   placeholder="Enter limit price"
                 />
               </div>
@@ -848,14 +770,14 @@ export function Trading({ walletAddress, coin = 'BTC-PERP' }: TradingProps) {
                     setSizePercent(0);
                   }}
                   disabled={isLoading}
-                  className="flex-1 px-3 py-2 bg-[#2a2a2a] border border-[#374151] rounded-lg text-white placeholder-gray-500 focus:ring-2 focus:ring-[#00C4B4] focus:border-transparent disabled:opacity-50 disabled:cursor-not-allowed"
+                  className="flex-1 px-3 py-2 bg-[#2a2a2a] border border-[#374151] rounded-lg text-white placeholder-gray-500 focus:ring-2 focus:ring-[#03c987] focus:border-transparent disabled:opacity-50 disabled:cursor-not-allowed"
                   placeholder={sizeUnit === coinName ? '1' : '10'}
                 />
                 <div className="relative">
                   <select
                     value={sizeUnit}
                     onChange={(e) => handleSizeUnitChange(e.target.value as SizeUnitType)}
-                    className="appearance-none px-3 py-2 bg-[#2a2a2a] border border-[#374151] rounded-lg text-white text-sm flex items-center gap-1 hover:bg-[#374151] transition-colors cursor-pointer pr-8 focus:ring-2 focus:ring-[#00C4B4] focus:border-transparent"
+                    className="appearance-none px-3 py-2 bg-[#2a2a2a] border border-[#374151] rounded-lg text-white text-sm flex items-center gap-1 hover:bg-[#374151] transition-colors cursor-pointer pr-8 focus:ring-2 focus:ring-[#03c987] focus:border-transparent"
                   >
                     <option value={coinName} className="bg-[#2a2a2a]">{coinName}</option>
                     <option value="USDC" className="bg-[#2a2a2a]">USDC</option>
@@ -881,23 +803,10 @@ export function Trading({ walletAddress, coin = 'BTC-PERP' }: TradingProps) {
                   onChange={(e) => {
                     const percent = parseInt(e.target.value);
                     setSizePercent(percent);
-                    if (percent > 0 && perpsBalance !== 'Loading...' && btcPrice !== 'Loading...') {
-                      const balance = parseFloat(perpsBalance.replace(/[^0-9.]/g, ''));
-                      const price = parseFloat(btcPrice.replace(/[^0-9.]/g, ''));
-                      if (!isNaN(balance) && !isNaN(price) && price > 0) {
-                        const sizeInUsd = (balance * percent) / 100;
-                        if (sizeUnit === coinName) {
-                          const sizeInCoin = sizeInUsd / price;
-                          setOrderSize(sizeInCoin.toFixed(4));
-                        } else {
-                          setOrderSize(sizeInUsd.toFixed(2));
-                        }
-                      }
-                    }
                   }}
                   className="w-full h-2 bg-[#2a2a2a] rounded-lg appearance-none cursor-pointer slider"
                   style={{
-                    background: `linear-gradient(to right, #00C4B4 0%, #00C4B4 ${sizePercent}%, #2a2a2a ${sizePercent}%, #2a2a2a 100%)`
+                    background: `linear-gradient(to right, #03c987 0%, #03c987 ${sizePercent}%, #2a2a2a ${sizePercent}%, #2a2a2a 100%)`
                   }}
                 />
                 <div className="flex justify-between mt-1">
@@ -905,7 +814,7 @@ export function Trading({ walletAddress, coin = 'BTC-PERP' }: TradingProps) {
                     <div
                       key={mark}
                       className={`w-1.5 h-1.5 rounded-full ${
-                        mark <= sizePercent ? 'bg-[#00C4B4]' : 'bg-[#4B5563]'
+                        mark <= sizePercent ? 'bg-[#03c987]' : 'bg-[#4B5563]'
                       }`}
                     />
                   ))}
@@ -925,7 +834,7 @@ export function Trading({ walletAddress, coin = 'BTC-PERP' }: TradingProps) {
                   type="checkbox"
                   checked={reduceOnly}
                   onChange={(e) => setReduceOnly(e.target.checked)}
-                  className="w-4 h-4 rounded border-[#374151] bg-[#2a2a2a] text-[#00C4B4] focus:ring-[#00C4B4] focus:ring-offset-0"
+                  className="w-4 h-4 rounded border-[#374151] bg-[#2a2a2a] text-[#03c987] focus:ring-[#03c987] focus:ring-offset-0"
                 />
                 <span className="text-sm text-gray-400">Reduce Only</span>
               </label>
@@ -934,7 +843,7 @@ export function Trading({ walletAddress, coin = 'BTC-PERP' }: TradingProps) {
                   type="checkbox"
                   checked={takeProfitStopLoss}
                   onChange={(e) => setTakeProfitStopLoss(e.target.checked)}
-                  className="w-4 h-4 rounded border-[#374151] bg-[#2a2a2a] text-[#00C4B4] focus:ring-[#00C4B4] focus:ring-offset-0"
+                  className="w-4 h-4 rounded border-[#374151] bg-[#2a2a2a] text-[#03c987] focus:ring-[#03c987] focus:ring-offset-0"
                 />
                 <span className="text-sm text-gray-400">Take Profit / Stop Loss</span>
               </label>
@@ -944,8 +853,8 @@ export function Trading({ walletAddress, coin = 'BTC-PERP' }: TradingProps) {
             {isTradingEnabled === false ? (
               <button
                 onClick={handleEnableTrading}
-                disabled={isLoading || !sdk}
-                className="w-full bg-[#00C4B4] hover:bg-[#00B8A8] disabled:bg-[#4B5563] text-white font-semibold py-3 px-6 rounded-lg transition-all disabled:cursor-not-allowed"
+                disabled={isLoading || !readOnlySdk}
+                className="w-full bg-[#03c987] hover:bg-[#02b877] disabled:bg-[#4B5563] text-white font-semibold py-3 px-6 rounded-lg transition-all disabled:cursor-not-allowed"
               >
                 {isLoading ? (
                   <span className="flex items-center justify-center">
@@ -978,10 +887,10 @@ export function Trading({ walletAddress, coin = 'BTC-PERP' }: TradingProps) {
             ) : (
               <button
                 onClick={() => handlePlaceOrder(activeTab === 'long')}
-                disabled={isLoading || !sdk}
+                disabled={isLoading || !readOnlySdk}
                 className={`w-full ${
                   activeTab === 'long'
-                    ? 'bg-[#00C4B4] hover:bg-[#00B8A8]'
+                    ? 'bg-[#03c987] hover:bg-[#02b877]'
                     : 'bg-red-600 hover:bg-red-700'
                 } disabled:bg-[#4B5563] text-white font-semibold py-3 px-6 rounded-lg transition-all disabled:cursor-not-allowed`}
               >
@@ -1021,7 +930,7 @@ export function Trading({ walletAddress, coin = 'BTC-PERP' }: TradingProps) {
               <div
                 className={`p-3 rounded-lg ${
                   status.type === 'success'
-                    ? 'bg-[#064E3B] border border-[#00C4B4]'
+                    ? 'bg-[#064E3B] border border-[#03c987]'
                     : status.type === 'error'
                     ? 'bg-[#7F1D1D] border border-[#EF4444]'
                     : 'bg-[#1E3A5F] border border-[#3B82F6]'
@@ -1030,7 +939,7 @@ export function Trading({ walletAddress, coin = 'BTC-PERP' }: TradingProps) {
                 <p
                   className={`text-sm ${
                     status.type === 'success'
-                      ? 'text-[#00C4B4]'
+                      ? 'text-[#03c987]'
                       : status.type === 'error'
                       ? 'text-[#EF4444]'
                       : 'text-[#3B82F6]'

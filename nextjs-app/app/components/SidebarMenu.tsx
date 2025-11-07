@@ -1,16 +1,22 @@
 'use client';
 
 import { useState, useEffect } from 'react';
-import { Hyperliquid } from 'hyperliquid';
+import { useHyperliquid } from '../contexts/HyperliquidContext';
+import { SkeletonBalance } from './Skeleton';
+import { 
+  useClearinghouseState, 
+  useSpotClearinghouseState, 
+  useUserOpenOrders, 
+  useHistoricalOrders,
+  useInvalidateHyperliquidQueries 
+} from '../hooks/useHyperliquidQueries';
 
 interface SidebarMenuProps {
   walletAddress: string;
-  sdk: Hyperliquid | null;
 }
 
-const TESTNET = true;
-
-export function SidebarMenu({ walletAddress, sdk }: SidebarMenuProps) {
+export function SidebarMenu({ walletAddress }: SidebarMenuProps) {
+  const { readOnlySdk, getTradingSdk } = useHyperliquid();
   const [activeMenuTab, setActiveMenuTab] = useState<'balances' | 'positions' | 'openOrders' | 'orderHistory'>('balances');
   const [positions, setPositions] = useState<Array<{
     coin: string;
@@ -40,90 +46,75 @@ export function SidebarMenu({ walletAddress, sdk }: SidebarMenuProps) {
     status?: string;
     statusTimestamp?: number;
   }>>([]);
-  const [accountValue, setAccountValue] = useState<string>('Loading...');
-  const [perpsBalance, setPerpsBalance] = useState<string>('Loading...');
-  const [spotBalance, setSpotBalance] = useState<string>('Loading...');
+  // React Query hooks
+  const { data: clearinghouseState, isLoading: isLoadingClearinghouse } = useClearinghouseState(walletAddress);
+  const { data: spotState, isLoading: isLoadingSpot } = useSpotClearinghouseState(walletAddress);
+  const { data: openOrdersData, isLoading: isLoadingOrders } = useUserOpenOrders(walletAddress, activeMenuTab === 'openOrders');
+  const { data: orderHistoryData, isLoading: isLoadingHistory } = useHistoricalOrders(walletAddress, activeMenuTab === 'orderHistory');
+  const { invalidateClearinghouseState, invalidateUserOpenOrders } = useInvalidateHyperliquidQueries();
 
-  // Fetch data for menu tabs
+  // Calculate balances and positions from React Query data
+  const accountValue = clearinghouseState?.marginSummary?.accountValue 
+    ? `$${parseFloat(clearinghouseState.marginSummary.accountValue).toFixed(2)}` 
+    : null;
+  const perpsBalance = clearinghouseState?.withdrawable 
+    ? `$${parseFloat(clearinghouseState.withdrawable).toFixed(2)}` 
+    : null;
+
+  // Calculate spot balance
+  const spotBalance = spotState && typeof spotState === 'object' && 'balances' in spotState
+    ? (() => {
+        const balances = (spotState as any).balances || [];
+        if (Array.isArray(balances) && balances.length > 0) {
+          const usdcBalance = balances.find((bal: any) => 
+            bal.coin === 'USDC' || bal.coin === 'USDC-SPOT'
+          );
+          if (usdcBalance) {
+            return `$${parseFloat(usdcBalance.total || '0').toFixed(2)}`;
+          }
+        }
+        return '$0.00';
+      })()
+    : null;
+
+  // Update positions when clearinghouseState changes
   useEffect(() => {
-    if (!walletAddress || !sdk) return;
+    if (clearinghouseState?.assetPositions) {
+      const activePositions = clearinghouseState.assetPositions
+        .filter((pos: { position?: { szi?: string } }) => pos.position && parseFloat(pos.position.szi || '0') !== 0)
+        .map((pos: { position: { coin: string; szi: string; entryPx: string; unrealizedPnl: string; leverage?: { value: number }; marginUsed?: string } }) => ({
+          coin: pos.position.coin,
+          size: pos.position.szi,
+          entryPx: pos.position.entryPx,
+          unrealizedPnl: pos.position.unrealizedPnl,
+          leverage: pos.position.leverage ? { value: String(pos.position.leverage.value) } : undefined,
+          marginUsed: pos.position.marginUsed,
+        }));
+      setPositions(activePositions);
+    } else {
+      setPositions([]);
+    }
+  }, [clearinghouseState]);
 
-    const fetchMenuData = async () => {
-      try {
-        const normalizedWalletAddress = walletAddress.toLowerCase();
+  // Update open orders when data changes
+  useEffect(() => {
+    if (openOrdersData) {
+      setOpenOrders(openOrdersData || []);
+    } else {
+      setOpenOrders([]);
+    }
+  }, [openOrdersData]);
 
-        // Fetch balances and positions
-        if (activeMenuTab === 'positions' || activeMenuTab === 'balances') {
-          const clearinghouseState = await sdk.info.perpetuals.getClearinghouseState(normalizedWalletAddress);
-          if (clearinghouseState) {
-            const accountVal = parseFloat(clearinghouseState.marginSummary?.accountValue || '0');
-            const withdrawable = parseFloat(clearinghouseState.withdrawable || '0');
-            setAccountValue(`$${accountVal.toFixed(2)}`);
-            setPerpsBalance(`$${withdrawable.toFixed(2)}`);
+  // Update order history when data changes
+  useEffect(() => {
+    if (orderHistoryData) {
+      setOrderHistory(orderHistoryData || []);
+    } else {
+      setOrderHistory([]);
+    }
+  }, [orderHistoryData]);
 
-            if (clearinghouseState.assetPositions) {
-              const activePositions = clearinghouseState.assetPositions
-                .filter((pos: { position?: { szi?: string } }) => pos.position && parseFloat(pos.position.szi || '0') !== 0)
-                .map((pos: { position: { coin: string; szi: string; entryPx: string; unrealizedPnl: string; leverage?: { value: number }; marginUsed?: string } }) => ({
-                  coin: pos.position.coin,
-                  size: pos.position.szi,
-                  entryPx: pos.position.entryPx,
-                  unrealizedPnl: pos.position.unrealizedPnl,
-                  leverage: pos.position.leverage ? { value: String(pos.position.leverage.value) } : undefined,
-                  marginUsed: pos.position.marginUsed,
-                }));
-              setPositions(activePositions);
-            }
-          }
-
-          // Fetch spot balance
-          try {
-            const spotState = await sdk.info.spot.getSpotClearinghouseState(normalizedWalletAddress);
-            if (spotState && typeof spotState === 'object' && 'balances' in spotState) {
-              const balances = (spotState as any).balances || [];
-              if (Array.isArray(balances) && balances.length > 0) {
-                const usdcBalance = balances.find((bal: any) => 
-                  bal.coin === 'USDC' || bal.coin === 'USDC-SPOT'
-                );
-                if (usdcBalance) {
-                  const total = parseFloat(usdcBalance.total || '0');
-                  setSpotBalance(`$${total.toFixed(2)}`);
-                } else {
-                  setSpotBalance('$0.00');
-                }
-              } else {
-                setSpotBalance('$0.00');
-              }
-            } else {
-              setSpotBalance('$0.00');
-            }
-          } catch (error) {
-            console.error('Error fetching spot balance:', error);
-            setSpotBalance('N/A');
-          }
-        }
-
-        // Fetch open orders
-        if (activeMenuTab === 'openOrders') {
-          const orders = await sdk.info.getUserOpenOrders(normalizedWalletAddress);
-          setOpenOrders(orders || []);
-        }
-
-        // Fetch order history
-        if (activeMenuTab === 'orderHistory') {
-          const history = await sdk.info.getHistoricalOrders(normalizedWalletAddress);
-          setOrderHistory(history || []);
-        }
-      } catch (error) {
-        console.error('Error fetching menu data:', error);
-      }
-    };
-
-    fetchMenuData();
-    // Refresh every 5 seconds
-    const interval = setInterval(fetchMenuData, 5000);
-    return () => clearInterval(interval);
-  }, [walletAddress, sdk, activeMenuTab]);
+  const isLoadingBalances = isLoadingClearinghouse || isLoadingSpot;
 
   // Get agent info from localStorage
   const getAgentFromStorage = (): { privateKey: string; userAddress: string } | null => {
@@ -154,16 +145,8 @@ export function SidebarMenu({ walletAddress, sdk }: SidebarMenuProps) {
     setCancellingOrderId(order.oid);
 
     try {
-      // Create SDK instance with private key for signing
-      const tradingSdk = new Hyperliquid({
-        testnet: TESTNET,
-        enableWs: false,
-        walletAddress: agentInfo.userAddress,
-        privateKey: agentInfo.privateKey,
-      });
-
-      await tradingSdk.connect();
-      await tradingSdk.ensureInitialized();
+      // Get trading SDK instance with private key for signing
+      const tradingSdk = await getTradingSdk(agentInfo.privateKey, agentInfo.userAddress);
 
       // Cancel the order
       const cancelRequest = {
@@ -175,10 +158,8 @@ export function SidebarMenu({ walletAddress, sdk }: SidebarMenuProps) {
       console.log('Cancel order response:', response);
 
       if (response.status === 'ok') {
-        // Refresh open orders
-        const normalizedWalletAddress = walletAddress.toLowerCase();
-        const orders = await sdk?.info.getUserOpenOrders(normalizedWalletAddress);
-        setOpenOrders(orders || []);
+        // Invalidate queries to refresh data
+        invalidateUserOpenOrders(walletAddress);
       } else {
         alert(`Failed to cancel order: ${JSON.stringify(response)}`);
       }
@@ -206,38 +187,16 @@ export function SidebarMenu({ walletAddress, sdk }: SidebarMenuProps) {
     setClosingPositionCoin(position.coin);
 
     try {
-      // Create SDK instance with private key for signing
-      const tradingSdk = new Hyperliquid({
-        testnet: TESTNET,
-        enableWs: false,
-        walletAddress: agentInfo.userAddress,
-        privateKey: agentInfo.privateKey,
-      });
-
-      await tradingSdk.connect();
-      await tradingSdk.ensureInitialized();
+      // Get trading SDK instance with private key for signing
+      const tradingSdk = await getTradingSdk(agentInfo.privateKey, agentInfo.userAddress);
 
       // Close the position using marketClose
       const response = await tradingSdk.custom.marketClose(position.coin);
       console.log('Close position response:', response);
 
       if (response.status === 'ok') {
-        // Refresh positions
-        const normalizedWalletAddress = walletAddress.toLowerCase();
-        const clearinghouseState = await sdk?.info.perpetuals.getClearinghouseState(normalizedWalletAddress);
-        if (clearinghouseState && clearinghouseState.assetPositions) {
-          const activePositions = clearinghouseState.assetPositions
-            .filter((pos: { position?: { szi?: string } }) => pos.position && parseFloat(pos.position.szi || '0') !== 0)
-            .map((pos: { position: { coin: string; szi: string; entryPx: string; unrealizedPnl: string; leverage?: { value: number }; marginUsed?: string } }) => ({
-              coin: pos.position.coin,
-              size: pos.position.szi,
-              entryPx: pos.position.entryPx,
-              unrealizedPnl: pos.position.unrealizedPnl,
-              leverage: pos.position.leverage ? { value: String(pos.position.leverage.value) } : undefined,
-              marginUsed: pos.position.marginUsed,
-            }));
-          setPositions(activePositions);
-        }
+        // Invalidate queries to refresh data
+        invalidateClearinghouseState(walletAddress);
       } else {
         alert(`Failed to close position: ${JSON.stringify(response)}`);
       }
@@ -306,15 +265,27 @@ export function SidebarMenu({ walletAddress, sdk }: SidebarMenuProps) {
             <div className="space-y-4">
               <div className="flex justify-between items-center p-4 bg-gradient-to-r from-white to-purple-50/50 dark:from-gray-800 dark:to-purple-900/30 rounded-xl shadow-md hover:shadow-lg transition-all duration-200 border border-purple-100/50 dark:border-purple-800/50 hover:scale-[1.02]">
                 <span className="text-sm font-medium text-gray-700 dark:text-gray-300">Account Value:</span>
-                <span className="font-bold text-lg bg-gradient-to-r from-purple-600 to-blue-600 bg-clip-text text-transparent">{accountValue}</span>
+                {isLoadingBalances || accountValue === null ? (
+                  <SkeletonBalance width={100} />
+                ) : (
+                  <span className="font-bold text-lg bg-gradient-to-r from-purple-600 to-blue-600 bg-clip-text text-transparent">{accountValue}</span>
+                )}
               </div>
               <div className="flex justify-between items-center p-4 bg-gradient-to-r from-white to-blue-50/50 dark:from-gray-800 dark:to-blue-900/30 rounded-xl shadow-md hover:shadow-lg transition-all duration-200 border border-blue-100/50 dark:border-blue-800/50 hover:scale-[1.02]">
                 <span className="text-sm font-medium text-gray-700 dark:text-gray-300">Perps Balance:</span>
-                <span className="font-bold text-lg text-blue-600 dark:text-blue-400">{perpsBalance}</span>
+                {isLoadingBalances || perpsBalance === null ? (
+                  <SkeletonBalance width={100} />
+                ) : (
+                  <span className="font-bold text-lg text-blue-600 dark:text-blue-400">{perpsBalance}</span>
+                )}
               </div>
               <div className="flex justify-between items-center p-4 bg-gradient-to-r from-white to-green-50/50 dark:from-gray-800 dark:to-green-900/30 rounded-xl shadow-md hover:shadow-lg transition-all duration-200 border border-green-100/50 dark:border-green-800/50 hover:scale-[1.02]">
                 <span className="text-sm font-medium text-gray-700 dark:text-gray-300">Spot Balance:</span>
-                <span className="font-bold text-lg text-green-600 dark:text-green-400">{spotBalance}</span>
+                {isLoadingBalances || spotBalance === null ? (
+                  <SkeletonBalance width={100} />
+                ) : (
+                  <span className="font-bold text-lg text-green-600 dark:text-green-400">{spotBalance}</span>
+                )}
               </div>
             </div>
           </div>

@@ -1,6 +1,6 @@
 'use client';
 
-import { useState, useEffect, useCallback, useRef } from 'react';
+import { useState, useEffect, useCallback, useRef, useMemo } from 'react';
 import { 
   createChart, 
   ColorType, 
@@ -14,54 +14,47 @@ import {
   LineStyleOptions,
   SeriesOptionsCommon
 } from 'lightweight-charts';
-import { Hyperliquid } from 'hyperliquid';
+import { useHyperliquid } from '../contexts/HyperliquidContext';
+import { SkeletonBox } from './Skeleton';
+import { useCandleSnapshot } from '../hooks/useHyperliquidQueries';
+import { useQueryClient } from '@tanstack/react-query';
 
 interface ChartProps {
   coin?: string;
-  sdk?: Hyperliquid | null;
+  walletAddress?: string;
 }
 
-const TESTNET = true;
-
-export function Chart({ coin = 'BTC', sdk: providedSdk }: ChartProps) {
+export function Chart({ coin = 'BTC', walletAddress }: ChartProps) {
+  const { readOnlySdk } = useHyperliquid();
   const chartContainerRef = useRef<HTMLDivElement>(null);
   const chartRef = useRef<IChartApi | null>(null);
   const candlestickSeriesRef = useRef<ISeriesApi<'Candlestick'> | null>(null);
   const volumeSeriesRef = useRef<ISeriesApi<'Histogram'> | null>(null);
   const lineSeriesRef = useRef<ISeriesApi<'Line'>[]>([]); // For indicators
   const [interval, setInterval] = useState<'1h' | '4h' | '1d'>('1h');
-  const [loading, setLoading] = useState(true);
-  const [error, setError] = useState<string | null>(null);
-  const [sdk, setSdk] = useState<Hyperliquid | null>(providedSdk || null);
-  const [currentPrice, setCurrentPrice] = useState<number | null>(null);
-  const [priceChange, setPriceChange] = useState<{ value: number; percent: number } | null>(null);
   const [chartType, setChartType] = useState<'candlestick' | 'line' | 'area'>('candlestick');
   const [showIndicators, setShowIndicators] = useState(false);
   const [maPeriod, setMaPeriod] = useState<number>(20);
   const [isFullscreen, setIsFullscreen] = useState(false);
+  const [hasInitialized, setHasInitialized] = useState(false);
 
-  // Initialize SDK if not provided
-  useEffect(() => {
-    if (providedSdk) {
-      setSdk(providedSdk);
-    } else {
-      const initializeSDK = async () => {
-        try {
-          const hyperliquid = new Hyperliquid({
-            testnet: TESTNET,
-            enableWs: false,
-          });
-          await hyperliquid.connect();
-          await hyperliquid.ensureInitialized();
-          setSdk(hyperliquid);
-        } catch (error) {
-          console.error('Error initializing SDK:', error);
-          setError('Failed to initialize SDK');
-        }
-      };
-      initializeSDK();
+  // Prepare coin symbol for API call
+  const coinSymbol = useMemo(() => {
+    if (coin.includes('-USDC')) {
+      return coin.replace('-USDC', '-PERP');
+    } else if (!coin.includes('-PERP') && !coin.includes('-')) {
+      return `${coin}-PERP`;
     }
-  }, [providedSdk]);
+    return coin;
+  }, [coin]);
+
+  // Use React Query to fetch candle data
+  // Pass only coin and interval - startTime/endTime calculated inside hook
+  const { data: candles, isLoading, error: queryError, refetch } = useCandleSnapshot(
+    coinSymbol,
+    interval,
+    !!readOnlySdk && !!coinSymbol
+  );
 
   // Initialize chart
   useEffect(() => {
@@ -69,20 +62,20 @@ export function Chart({ coin = 'BTC', sdk: providedSdk }: ChartProps) {
 
     const chart = createChart(chartContainerRef.current, {
       layout: {
-        background: { type: ColorType.Solid, color: '#1a1a1a' },
-        textColor: '#9ca3af',
+        background: { type: ColorType.Solid, color: '#0C130F' },
+        textColor: '#888',
         fontSize: 11,
       },
       width: chartContainerRef.current.clientWidth,
       height: chartContainerRef.current.clientHeight,
       grid: {
         vertLines: { 
-          color: '#2a2a2a',
+          color: '#1b1b1b',
           visible: true,
           style: 0,
         },
         horzLines: { 
-          color: '#2a2a2a',
+          color: '#1b1b1b',
           visible: true,
           style: 0,
         },
@@ -90,20 +83,20 @@ export function Chart({ coin = 'BTC', sdk: providedSdk }: ChartProps) {
       crosshair: {
         mode: 1,
         vertLine: {
-          color: '#4b5563',
+          color: '#1b1b1b',
           width: 1,
           style: 3,
-          labelBackgroundColor: '#374151',
+          labelBackgroundColor: '#0C130F',
         },
         horzLine: {
-          color: '#4b5563',
+          color: '#1b1b1b',
           width: 1,
           style: 3,
-          labelBackgroundColor: '#374151',
+          labelBackgroundColor: '#0C130F',
         },
       },
       rightPriceScale: {
-        borderColor: '#2a2a2a',
+        borderColor: '#1b1b1b',
         scaleMargins: {
           top: 0.05,
           bottom: 0.25,
@@ -112,7 +105,7 @@ export function Chart({ coin = 'BTC', sdk: providedSdk }: ChartProps) {
       },
       leftPriceScale: {
         visible: true,
-        borderColor: '#2a2a2a',
+        borderColor: '#1b1b1b',
         scaleMargins: {
           top: 0.75,
           bottom: 0.05,
@@ -120,7 +113,7 @@ export function Chart({ coin = 'BTC', sdk: providedSdk }: ChartProps) {
         entireTextOnly: false,
       },
       timeScale: {
-        borderColor: '#2a2a2a',
+        borderColor: '#1b1b1b',
         timeVisible: true,
         secondsVisible: false,
         rightOffset: 2,
@@ -132,11 +125,11 @@ export function Chart({ coin = 'BTC', sdk: providedSdk }: ChartProps) {
 
     // Create candlestick series (API v5: use CandlestickSeries constant)
     const candlestickSeries = chart.addSeries(CandlestickSeries, {
-      upColor: '#26a69a',
-      downColor: '#ef5350',
+      upColor: '#03c987',
+      downColor: '#ff4d4f',
       borderVisible: false,
-      wickUpColor: '#26a69a',
-      wickDownColor: '#ef5350',
+      wickUpColor: '#03c987',
+      wickDownColor: '#ff4d4f',
       priceScaleId: 'right',
     });
     candlestickSeriesRef.current = candlestickSeries;
@@ -144,7 +137,7 @@ export function Chart({ coin = 'BTC', sdk: providedSdk }: ChartProps) {
     // Create volume series on separate pane (API v5: use HistogramSeries constant)
     // Volume uses left price scale which is hidden
     const volumeSeries = chart.addSeries(HistogramSeries, {
-      color: '#26a69a80',
+      color: '#03c98780',
       priceFormat: {
         type: 'volume',
       },
@@ -208,7 +201,7 @@ export function Chart({ coin = 'BTC', sdk: providedSdk }: ChartProps) {
 
     // Add MA line
     const maSeries = chartRef.current.addSeries(LineSeries, {
-      color: '#ff9800',
+      color: '#03c987',
       lineWidth: 2,
       priceScaleId: 'right',
       title: `MA${period}`,
@@ -266,123 +259,68 @@ export function Chart({ coin = 'BTC', sdk: providedSdk }: ChartProps) {
     });
   }, []);
 
-  const fetchCandleData = useCallback(async () => {
-    if (!sdk || !candlestickSeriesRef.current || !volumeSeriesRef.current) {
-      if (!sdk) {
-        setError('SDK not initialized');
-      }
+  // Format candles data for chart when data changes
+  useEffect(() => {
+    if (!candles || !Array.isArray(candles) || candles.length === 0) {
       return;
     }
 
-    setLoading(true);
-    setError(null);
+    if (!candlestickSeriesRef.current || !volumeSeriesRef.current) {
+      return;
+    }
 
     try {
-      const now = Date.now();
-      let daysBack = 1;
-      if (interval === '4h') {
-        daysBack = 7;
-      } else if (interval === '1d') {
-        daysBack = 30;
-      }
-      const startTime = now - (daysBack * 24 * 60 * 60 * 1000);
-
-      // Ensure coin has -PERP suffix for API call (coin might come as BTC-PERP or BTC-USDC)
-      let coinSymbol = coin;
-      if (coin.includes('-USDC')) {
-        coinSymbol = coin.replace('-USDC', '-PERP');
-      } else if (!coin.includes('-PERP') && !coin.includes('-')) {
-        coinSymbol = `${coin}-PERP`;
-      }
+      // Format data for lightweight-charts
+      // Ensure data is sorted and has no duplicates
+      const sortedCandles = [...candles].sort((a, b) => a.t - b.t);
       
-      const candles = await sdk.info.getCandleSnapshot(
-        coinSymbol,
-        interval,
-        startTime,
-        now
+      // Remove duplicates by time
+      const uniqueCandles = sortedCandles.filter((candle, index, self) =>
+        index === 0 || candle.t !== self[index - 1].t
       );
 
-      if (candles && Array.isArray(candles) && candles.length > 0) {
-        // Format data for lightweight-charts
-        // Ensure data is sorted and has no duplicates
-        const sortedCandles = [...candles].sort((a, b) => a.t - b.t);
-        
-        // Remove duplicates by time
-        const uniqueCandles = sortedCandles.filter((candle, index, self) =>
-          index === 0 || candle.t !== self[index - 1].t
-        );
+      const formattedCandles = uniqueCandles.map((candle) => ({
+        time: Math.floor(candle.t / 1000) as UTCTimestamp, // Convert to seconds (must be integer)
+        open: parseFloat(String(candle.o)),
+        high: parseFloat(String(candle.h)),
+        low: parseFloat(String(candle.l)),
+        close: parseFloat(String(candle.c)),
+      })).filter(c => c.close > 0 && c.open > 0 && c.high > 0 && c.low > 0); // Filter invalid data
 
-        const formattedCandles = uniqueCandles.map((candle) => ({
-          time: Math.floor(candle.t / 1000) as UTCTimestamp, // Convert to seconds (must be integer)
-          open: parseFloat(String(candle.o)),
-          high: parseFloat(String(candle.h)),
-          low: parseFloat(String(candle.l)),
-          close: parseFloat(String(candle.c)),
-        })).filter(c => c.close > 0 && c.open > 0 && c.high > 0 && c.low > 0); // Filter invalid data
+      const formattedVolume = uniqueCandles.map((candle) => ({
+        time: Math.floor(candle.t / 1000) as UTCTimestamp,
+        value: parseFloat(String(candle.v || 0)),
+        color: parseFloat(String(candle.c)) >= parseFloat(String(candle.o))
+          ? '#03c98780'
+          : '#ff4d4f80',
+      })).filter(v => v.time !== undefined);
 
-        const formattedVolume = uniqueCandles.map((candle) => ({
-          time: Math.floor(candle.t / 1000) as UTCTimestamp,
-          value: parseFloat(String(candle.v || 0)),
-          color: parseFloat(String(candle.c)) >= parseFloat(String(candle.o))
-            ? '#26a69a80'
-            : '#ef535080',
-        })).filter(v => v.time !== undefined);
+      // Update chart data
+      candlestickSeriesRef.current.setData(formattedCandles);
+      volumeSeriesRef.current.setData(formattedVolume);
 
-        // Update chart data
-        candlestickSeriesRef.current.setData(formattedCandles);
-        volumeSeriesRef.current.setData(formattedVolume);
-
-        // Calculate and add indicators if enabled
-        if (showIndicators && formattedCandles.length >= maPeriod) {
-          addMovingAverage(formattedCandles, maPeriod);
-        } else {
-          // Remove indicators
-          lineSeriesRef.current.forEach(series => {
-            chartRef.current?.removeSeries(series);
-          });
-          lineSeriesRef.current = [];
-        }
-
-        // Calculate price change
-        if (formattedCandles.length > 0) {
-          const firstPrice = formattedCandles[0].close;
-          const lastPrice = formattedCandles[formattedCandles.length - 1].close;
-          const change = lastPrice - firstPrice;
-          const changePercent = (change / firstPrice) * 100;
-
-          setCurrentPrice(lastPrice);
-          setPriceChange({
-            value: change,
-            percent: changePercent,
-          });
-        }
-
-        // Fit content
-        if (chartRef.current) {
-          chartRef.current.timeScale().fitContent();
-        }
+      // Calculate and add indicators if enabled
+      if (showIndicators && formattedCandles.length >= maPeriod) {
+        addMovingAverage(formattedCandles, maPeriod);
       } else {
-        throw new Error('No candle data received');
+        // Remove indicators
+        lineSeriesRef.current.forEach(series => {
+          chartRef.current?.removeSeries(series);
+        });
+        lineSeriesRef.current = [];
+      }
+
+      // Fit content (only once after initialization)
+      if (chartRef.current && !hasInitialized) {
+        chartRef.current.timeScale().fitContent();
+        setHasInitialized(true);
       }
     } catch (err) {
-      console.error('Error fetching candle data:', err);
-      setError(err instanceof Error ? err.message : 'Failed to fetch chart data');
-    } finally {
-      setLoading(false);
+      console.error('Error processing candle data:', err);
     }
-  }, [sdk, coin, interval, showIndicators, maPeriod, addMovingAverage]);
+  }, [candles, showIndicators, maPeriod, addMovingAverage, hasInitialized]);
 
-  useEffect(() => {
-    if (sdk && candlestickSeriesRef.current && volumeSeriesRef.current) {
-      fetchCandleData();
-      const intervalId = window.setInterval(() => {
-        fetchCandleData();
-      }, 60000);
-      return () => {
-        window.clearInterval(intervalId);
-      };
-    }
-  }, [sdk, coin, interval, fetchCandleData]);
+  // Buy/Sell markers feature disabled
 
   // Listen for fullscreen changes
   useEffect(() => {
@@ -403,50 +341,20 @@ export function Chart({ coin = 'BTC', sdk: providedSdk }: ChartProps) {
     return () => document.removeEventListener('fullscreenchange', handleFullscreenChange);
   }, []);
 
-  const formatPrice = (value: number) => {
-    return `$${value.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
-  };
-
-  const isPositive = priceChange ? priceChange.percent >= 0 : true;
-
   return (
-    <div className="h-full flex flex-col bg-[#1a1a1a] rounded-lg shadow-xl border border-gray-800 overflow-hidden">
-      {/* Header - Compact */}
-      <div className="flex items-center justify-between px-3 py-2 border-b border-gray-800">
-        <div className="flex items-center gap-3">
-          <h2 className="text-base font-bold text-white">
-            {coin.includes('-PERP') ? coin.replace('-PERP', '-USDC') : coin.includes('-') ? coin : `${coin}-USDC`}
-          </h2>
-          {currentPrice !== null && (
-            <>
-              <span className="text-lg font-bold text-white">
-                {formatPrice(currentPrice)}
-              </span>
-              {priceChange && (
-                <span
-                  className={`text-xs font-semibold px-1.5 py-0.5 rounded ${
-                    isPositive
-                      ? 'text-green-400 bg-green-400/10'
-                      : 'text-red-400 bg-red-400/10'
-                  }`}
-                >
-                  {isPositive ? '+' : ''}{priceChange.percent.toFixed(2)}%
-                </span>
-              )}
-            </>
-          )}
-        </div>
-
+    <div className="w-full h-full flex flex-col bg-[#0C130F] overflow-hidden">
+      {/* Header - Compact with Controls */}
+      <div className="flex items-center justify-end px-2.5 py-1.5 border-b border-[#1b1b1b] flex-shrink-0">
         {/* Controls - Compact */}
-        <div className="flex items-center gap-1.5">
+        <div className="flex items-center gap-1">
           {/* Chart Type Selector */}
-          <div className="flex gap-0.5 bg-gray-800/50 rounded p-0.5">
+          <div className="flex gap-0.5 bg-[#1b1b1b] rounded p-0.5">
             <button
               onClick={() => setChartType('candlestick')}
-              className={`px-2 py-1 text-xs font-medium rounded transition-all ${
+              className={`px-1.5 py-0.5 text-xs font-medium rounded transition-all ${
                 chartType === 'candlestick'
-                  ? 'bg-[#00C4B4] hover:bg-[#00B8A8] text-white'
-                  : 'text-gray-400 hover:text-white hover:bg-gray-700/50'
+                  ? 'bg-[#03c987] hover:bg-[#02b877] text-white'
+                  : 'text-[#888] hover:text-[#c0c0c0] hover:bg-[#1b1b1b]'
               }`}
               title="Candlestick"
             >
@@ -454,10 +362,10 @@ export function Chart({ coin = 'BTC', sdk: providedSdk }: ChartProps) {
             </button>
             <button
               onClick={() => setChartType('line')}
-              className={`px-2 py-1 text-xs font-medium rounded transition-all ${
+              className={`px-1.5 py-0.5 text-xs font-medium rounded transition-all ${
                 chartType === 'line'
-                  ? 'bg-[#00C4B4] hover:bg-[#00B8A8] text-white'
-                  : 'text-gray-400 hover:text-white hover:bg-gray-700/50'
+                  ? 'bg-[#03c987] hover:bg-[#02b877] text-white'
+                  : 'text-[#888] hover:text-[#c0c0c0] hover:bg-[#1b1b1b]'
               }`}
               title="Line"
             >
@@ -466,15 +374,15 @@ export function Chart({ coin = 'BTC', sdk: providedSdk }: ChartProps) {
           </div>
 
           {/* Interval Selector */}
-          <div className="flex gap-0.5 bg-gray-800/50 rounded p-0.5">
+          <div className="flex gap-0.5 bg-[#1b1b1b] rounded p-0.5">
             {(['1h', '4h', '1d'] as const).map((int) => (
               <button
                 key={int}
                 onClick={() => setInterval(int)}
-                className={`px-2 py-1 text-xs font-medium rounded transition-all ${
+                className={`px-1.5 py-0.5 text-xs font-medium rounded transition-all ${
                   interval === int
-                    ? 'bg-[#00C4B4] hover:bg-[#00B8A8] text-white'
-                    : 'text-gray-400 hover:text-white hover:bg-gray-700/50'
+                    ? 'bg-[#03c987] hover:bg-[#02b877] text-white'
+                    : 'text-[#888] hover:text-[#c0c0c0] hover:bg-[#1b1b1b]'
                 }`}
               >
                 {int}
@@ -482,13 +390,14 @@ export function Chart({ coin = 'BTC', sdk: providedSdk }: ChartProps) {
             ))}
           </div>
 
+
           {/* Indicators Toggle */}
           <button
             onClick={() => setShowIndicators(!showIndicators)}
-            className={`px-2 py-1 text-xs font-medium rounded transition-all ${
+            className={`px-1.5 py-0.5 text-xs font-medium rounded transition-all ${
               showIndicators
-                ? 'bg-[#00C4B4] hover:bg-[#00B8A8] text-white'
-                : 'text-gray-400 hover:text-white hover:bg-gray-700/50 bg-gray-800/50'
+                ? 'bg-[#03c987] hover:bg-[#02b877] text-white'
+                : 'text-[#888] hover:text-[#c0c0c0] hover:bg-[#1b1b1b] bg-[#1b1b1b]'
             }`}
             title="Show/Hide Indicators"
           >
@@ -500,7 +409,7 @@ export function Chart({ coin = 'BTC', sdk: providedSdk }: ChartProps) {
             <select
               value={maPeriod}
               onChange={(e) => setMaPeriod(Number(e.target.value))}
-              className="px-2 py-1 text-xs bg-gray-800 text-gray-300 rounded border border-gray-700 focus:border-blue-600 focus:outline-none"
+              className="px-1.5 py-0.5 text-xs bg-[#1b1b1b] text-[#c0c0c0] rounded border border-[#1b1b1b] focus:border-[#03c987] focus:outline-none"
             >
               <option value={10}>MA10</option>
               <option value={20}>MA20</option>
@@ -510,24 +419,24 @@ export function Chart({ coin = 'BTC', sdk: providedSdk }: ChartProps) {
           )}
 
           {/* Zoom Controls */}
-          <div className="flex gap-0.5 bg-gray-800/50 rounded p-0.5">
+          <div className="flex gap-0.5 bg-[#1b1b1b] rounded p-0.5">
             <button
               onClick={() => handleZoom('out')}
-              className="px-2 py-1 text-xs text-gray-400 hover:text-white hover:bg-gray-700/50 rounded transition-all"
+              className="px-1.5 py-0.5 text-xs text-[#888] hover:text-[#c0c0c0] hover:bg-[#1b1b1b] rounded transition-all"
               title="Zoom Out"
             >
               ➖
             </button>
             <button
               onClick={() => handleZoom('reset')}
-              className="px-2 py-1 text-xs text-gray-400 hover:text-white hover:bg-gray-700/50 rounded transition-all"
+              className="px-1.5 py-0.5 text-xs text-[#888] hover:text-[#c0c0c0] hover:bg-[#1b1b1b] rounded transition-all"
               title="Reset Zoom"
             >
               🔍
             </button>
             <button
               onClick={() => handleZoom('in')}
-              className="px-2 py-1 text-xs text-gray-400 hover:text-white hover:bg-gray-700/50 rounded transition-all"
+              className="px-1.5 py-0.5 text-xs text-[#888] hover:text-[#c0c0c0] hover:bg-[#1b1b1b] rounded transition-all"
               title="Zoom In"
             >
               ➕
@@ -537,11 +446,11 @@ export function Chart({ coin = 'BTC', sdk: providedSdk }: ChartProps) {
           {/* Fullscreen Toggle */}
           <button
             onClick={toggleFullscreen}
-            className="p-1.5 text-gray-400 hover:text-white transition-colors rounded hover:bg-gray-800/50"
+            className="p-1 text-[#888] hover:text-[#c0c0c0] transition-colors rounded hover:bg-[#1b1b1b]"
             title={isFullscreen ? "Exit Fullscreen" : "Fullscreen"}
           >
             <svg
-              className="w-4 h-4"
+              className="w-3.5 h-3.5"
               fill="none"
               stroke="currentColor"
               viewBox="0 0 24 24"
@@ -566,13 +475,13 @@ export function Chart({ coin = 'BTC', sdk: providedSdk }: ChartProps) {
 
           {/* Refresh Button */}
           <button
-            onClick={fetchCandleData}
-            disabled={loading || !sdk}
-            className="p-1.5 text-gray-400 hover:text-white disabled:opacity-50 transition-colors rounded hover:bg-gray-800/50"
+            onClick={() => refetch()}
+            disabled={isLoading || !readOnlySdk}
+            className="p-1 text-[#888] hover:text-[#c0c0c0] disabled:opacity-50 transition-colors rounded hover:bg-[#1b1b1b]"
             title="Refresh chart"
           >
             <svg
-              className={`w-4 h-4 ${loading ? 'animate-spin' : ''}`}
+              className={`w-3.5 h-3.5 ${isLoading ? 'animate-spin' : ''}`}
               fill="none"
               stroke="currentColor"
               viewBox="0 0 24 24"
@@ -589,74 +498,26 @@ export function Chart({ coin = 'BTC', sdk: providedSdk }: ChartProps) {
       </div>
 
       {/* Chart Content */}
-      <div className="flex-1 relative min-h-0 -mx-1">
-        {!sdk ? (
-          <div className="absolute inset-0 flex items-center justify-center">
-            <div className="text-center">
-              <svg
-                className="animate-spin h-8 w-8 text-blue-600 mx-auto mb-4"
-                xmlns="http://www.w3.org/2000/svg"
-                fill="none"
-                viewBox="0 0 24 24"
-              >
-                <circle
-                  className="opacity-25"
-                  cx="12"
-                  cy="12"
-                  r="10"
-                  stroke="currentColor"
-                  strokeWidth="4"
-                ></circle>
-                <path
-                  className="opacity-75"
-                  fill="currentColor"
-                  d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"
-                ></path>
-              </svg>
-              <p className="text-gray-400">Initializing SDK...</p>
-            </div>
+      <div className="flex-1 relative min-h-0 overflow-hidden isolate">
+        {!readOnlySdk ? (
+          <div className="absolute inset-0 bg-[#0C130F]">
+            <SkeletonBox width="100%" height="100%" />
           </div>
-        ) : loading && currentPrice === null ? (
-          <div className="absolute inset-0 flex items-center justify-center">
-            <div className="text-center">
-              <svg
-                className="animate-spin h-8 w-8 text-blue-600 mx-auto mb-4"
-                xmlns="http://www.w3.org/2000/svg"
-                fill="none"
-                viewBox="0 0 24 24"
-              >
-                <circle
-                  className="opacity-25"
-                  cx="12"
-                  cy="12"
-                  r="10"
-                  stroke="currentColor"
-                  strokeWidth="4"
-                ></circle>
-                <path
-                  className="opacity-75"
-                  fill="currentColor"
-                  d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"
-                ></path>
-              </svg>
-              <p className="text-gray-400">Loading chart data...</p>
-            </div>
+        ) : isLoading ? (
+          <div className="absolute inset-0 bg-[#0C130F]">
+            <SkeletonBox width="100%" height="100%" />
           </div>
-        ) : error ? (
-          <div className="absolute inset-0 flex items-center justify-center">
+        ) : queryError ? (
+          <div className="absolute inset-0 flex items-center justify-center bg-[#0C130F]">
             <div className="text-center">
-              <p className="text-red-400 mb-2">{error}</p>
-              <button
-                onClick={fetchCandleData}
-                className="px-4 py-2 bg-[#00C4B4] hover:bg-[#00B8A8] text-white rounded-lg transition-colors"
-              >
-                Retry
-              </button>
+              <p className="text-[#ff4d4f] mb-2 text-sm">
+                {queryError instanceof Error ? queryError.message : 'Failed to fetch chart data'}
+              </p>
             </div>
           </div>
         ) : null}
         
-        <div ref={chartContainerRef} className="w-full h-full px-1" />
+        <div ref={chartContainerRef} className="w-full h-full relative" />
       </div>
     </div>
   );
