@@ -529,7 +529,6 @@ The SDK provides WebSocket POST support for all exchange methods:
 - `wsPayloads.approveAgent(agentAddress, agentName?)` - Approve trading agent
 - `wsPayloads.approveBuilderFee(builder, maxFeeRate)` - Approve builder fees
 - `wsPayloads.scheduleCancel(time)` - Schedule order cancellation
-- `wsPayloads.setReferrer(code)` - Set referrer code
 
 ##### Advanced Usage with Custom Payloads
 

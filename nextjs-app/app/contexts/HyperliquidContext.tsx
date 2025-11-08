@@ -1,7 +1,7 @@
 'use client';
 
 import { createContext, useContext, useState, useEffect, useRef, ReactNode } from 'react';
-import { Hyperliquid } from 'hyperliquid';
+import { Hyperliquid } from '@/src';
 
 const TESTNET = true;
 

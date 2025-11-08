@@ -3,7 +3,7 @@
 import { useState, useEffect } from 'react';
 import { useSignTypedData } from 'wagmi';
 import { parseSignature, isHex } from 'viem';
-import { SpotToken } from 'hyperliquid';
+import { SpotToken } from '@/src';
 import { useHyperliquid } from '../contexts/HyperliquidContext';
 import { SkeletonBalance, SkeletonText } from './Skeleton';
 import { useSpotMeta, useClearinghouseState, useSpotClearinghouseState } from '../hooks/useHyperliquidQueries';

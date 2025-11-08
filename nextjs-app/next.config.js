@@ -34,12 +34,10 @@ const nextConfig = {
         ...(config.resolve.extensions || []),
       ];
       
-      // Resolve hyperliquid package explicitly
+      // Ignore React Native dependencies used by MetaMask SDK
       const path = require('path');
       config.resolve.alias = {
         ...config.resolve.alias,
-        'hyperliquid': path.resolve(__dirname, 'node_modules/hyperliquid/dist/index.mjs'),
-        // Ignore React Native dependencies used by MetaMask SDK
         '@react-native-async-storage/async-storage': false,
         // Ignore optional pino-pretty dependency
         'pino-pretty': false,

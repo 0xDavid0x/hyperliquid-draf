@@ -1,7 +1,7 @@
 'use client';
 
 import { useState, useEffect, useRef } from 'react';
-import { Hyperliquid } from 'hyperliquid';
+import { Hyperliquid } from '@/src';
 import { SkeletonText, SkeletonBox } from './Skeleton';
 interface RightPanelProps {
   walletAddress?: string;
